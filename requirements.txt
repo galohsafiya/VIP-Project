@@ -1,0 +1,18 @@
+# Core Machine Learning
+torch
+torchvision
+torchaudio
+
+# Data Handling & Balancing
+numpy
+pandas
+scikit-learn
+pillow
+tqdm
+
+# Visualization & Evaluation
+matplotlib
+seaborn
+
+# Application Interface
+streamlit
