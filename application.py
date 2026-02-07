@@ -22,14 +22,27 @@ st.set_page_config(
 
 # Custom CSS
 st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button {
-        width: 100%;
-        border-radius: 5px;
-        height: 3em;
-    }
-    </style>
+<style>
+.result-card {
+    background-color: white;
+    padding: 1.2rem;
+    border-radius: 10px;
+    border-left: 6px solid #4CAF50;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    margin-top: 1rem;
+}
+.result-card.bad {
+    border-left-color: #e74c3c;
+}
+.result-title {
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+.result-sub {
+    color: #555;
+    margin-top: 0.3rem;
+}
+</style>
 """, unsafe_allow_html=True)
 
 # ===============================
@@ -37,7 +50,12 @@ st.markdown("""
 # ===============================
 with st.sidebar:
     st.title("🛠️ Scanner Settings")
-    st.info("Adjust the scanner sensitivity and display options below.")
+
+    # NEW: User type selection
+    user_type = st.radio(
+        "You are a:",
+        ["Individual Consumer", "Food Supplier"]
+    )
 
     MODEL_CONFIG = {
         "Standard Mode (Faster)": {
@@ -155,19 +173,63 @@ def predict_food_type(image):
 # HOME PAGE
 # ===============================
 if page == "Home":
-    st.title("🍎 FreshScan")
-    st.subheader("Keep your kitchen safe and reduce food waste.")
+    st.title("🍎 Welcome to FreshScan")
+    st.subheader("Smart food checking made simple and reliable.")
 
     st.markdown("""
-    Welcome to **FreshScan**! This tool helps you instantly determine if your
-    fruits and vegetables are fresh or showing signs of decay.
+    FreshScan is an **AI-powered assistant** designed to help users quickly assess the
+    **freshness of fruits and vegetables** using image analysis.
 
-    ### How it works:
-    1. Click **Start Scanning** on the sidebar navigation.
-    2. Upload or capture an image of a fruit or vegetable you would like to identify.
-    3. Results receive in seconds! We will analyze its freshness and the food type.
-    4. You will also get a recommendation!
+    Whether you are an **individual consumer** or part of a **food supply business**,
+    FreshScan provides supportive insights to help you make better decisions and
+    reduce food waste.
     """)
+
+    st.divider()
+
+    st.markdown("""
+    ### 🧠 What FreshScan Does
+    - 📷 Analyzes images of fruits and vegetables  
+    - 🥗 Classifies freshness as **Fresh** or **Rotten**  
+    - 🏷️ Identifies the type of fruit or vegetable  
+    - 👤 Adapts results based on **user role** (Consumer or Supplier)  
+    """)
+
+    st.divider()
+
+    st.markdown("""
+    ### 👥 Who Is This For?
+    - **Individual Consumers**  
+      Check food safety before consumption at home  
+
+    - **Food Suppliers**  
+      Perform quick quality checks before sale or storage  
+    """)
+
+    st.divider()
+
+    st.markdown("""
+    ### 🔍 How It Works
+    1. Select your **user role** and preferred scanning mode from the sidebar  
+    2. Upload or capture an image in **Start Scanning**  
+    3. The system analyzes the image using deep learning models  
+    4. Freshness status, food type, and confidence level are displayed  
+    """)
+
+    st.markdown("### 🚀 Get Started")
+    st.write(
+        "Choose your role from the sidebar, then head to **Start Scanning** "
+        "to analyze your produce."
+    )
+
+    st.divider()
+
+    st.caption(
+        "ℹ️ FreshScan provides AI-assisted visual analysis. "
+        "Results may be affected by image quality, lighting conditions, "
+        "or visual similarities between food items. "
+        "Users are advised to always perform a manual inspection."
+    )
 
 # ===============================
 # SCANNER PAGE
@@ -196,8 +258,11 @@ elif page == "Start Scanning":
             st.image(image, caption="Current Preview", width=350)
 
         if show_details:
-            st.caption(f"Specs: {image.size[0]} x {image.size[1]} pixels")
+            st.caption(f"Specs: {image.size[0]} × {image.size[1]} pixels")
 
+        # -------------------------------
+        # ANALYSIS
+        # -------------------------------
         with st.status("🔍 Analyzing food quality...", expanded=True) as status:
             time.sleep(1)
 
@@ -210,8 +275,7 @@ elif page == "Start Scanning":
 
             label = CLASS_NAMES[pred_class.item()]
             score = confidence.item()
-
-            food_name = predict_food_type(image)
+            food_name = predict_food_type(image).title()
 
             status.update(
                 label="Scanning Complete!",
@@ -221,53 +285,145 @@ elif page == "Start Scanning":
 
         st.divider()
 
-        if label == "Fresh":
-            st.success("### ✨ Result: Fresh")
-            st.write(
-                f"The scanner is **{score*100:.1f}%** confident that this "
-                f"**{food_name.lower()}** is safe to eat."
-            )
-            st.balloons()
-        else:
-            st.error("### ⚠️ Result: Spoilage Detected")
-            st.write(
-                f"The scanner is **{score*100:.1f}%** confident that this "
-                f"**{food_name.lower()}** is showing signs of decay."
-            )
-            st.warning(
-                "**Recommendation:** We suggest you do not consume this item. "
-                "Consider composting if possible."
-            )
+        # -------------------------------
+        # RESULT CARD
+        # -------------------------------
+        if user_type == "Individual Consumer":
+            if label == "Fresh":
+                st.markdown(f"""
+                <div class="result-card">
+                    <div class="result-title">✨ Fresh</div>
+                    <div class="result-sub">{food_name} appears safe for consumption.</div>
+                </div>
+                """, unsafe_allow_html=True)
 
+                st.success("Recommendation: Safe to eat based on visual inspection.")
+                st.balloons()
+
+            else:
+                st.markdown(f"""
+                <div class="result-card bad">
+                    <div class="result-title">⚠️ Spoilage Detected</div>
+                    <div class="result-sub">{food_name} shows visible signs of decay.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.warning("Recommendation: Do not consume this item.")
+
+        else:  # Food Supplier
+            if label == "Fresh":
+                st.markdown(f"""
+                <div class="result-card">
+                    <div class="result-title">✅ Quality Check: Passed</div>
+                    <div class="result-sub">{food_name} meets freshness standards.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.info("Action: Suitable for sale or short-term storage.")
+
+            else:
+                st.markdown(f"""
+                <div class="result-card bad">
+                    <div class="result-title">❌ Quality Check: Failed</div>
+                    <div class="result-sub">{food_name} does not meet quality standards.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.warning("Action: Remove from inventory immediately.")
+
+        # -------------------------------
+        # CONFIDENCE 
+        # -------------------------------
         if show_confidence:
             st.progress(score)
 
-        if score < 0.75:
-            st.info(
-                "💡 Tip: Lighting may affect accuracy. "
-                "Try a brighter environment."
-            )
+            if score >= 0.85:
+                st.caption("🟢 High confidence result")
+            elif score >= 0.65:
+                st.caption("🟡 Medium confidence — verify manually")
+            else:
+                st.caption("🔴 Low confidence — manual inspection required")
+
+        # -------------------------------
+        # DISCLAIMER
+        # -------------------------------
+        st.info(
+            "ℹ️ AI-based analysis may be affected by lighting conditions, image quality, "
+            "or visual similarities between food items.\n\n"
+            "If multiple fruits or vegetables appear in a single image, the system provides "
+            "a general assessment and may not correctly detect spoiled areas on individual items "
+            "separately.\n\n"
+            "Always perform a manual inspection before consumption, sale, or distribution!"
+        )
 
 # ===============================
 # ABOUT PAGE
 # ===============================
 elif page == "About":
     st.title("ℹ️ About FreshScan")
+    st.subheader("An AI-assisted approach to food freshness assessment.")
 
     st.markdown("""
-    ### Our Mission
-    FreshScan helps reduce food waste and improve food safety
-    through AI-powered visual analysis.
+    FreshScan was developed as part of an academic project to explore how
+    **computer vision and deep learning** can be applied to real-world
+    food safety and waste reduction challenges.
 
-    ### Technology
-    - CNN-based freshness classification
-    - Pretrained food-category detection
-    - No additional training required
-
-    ### Team
-    - Galoh Safiya Binti Hasnul Hadi
-    - Marsha Binti Lana Azman
-    - Nur Arissa Hanani Binti Mohamed Adzlan
+    The application provides **visual-based freshness assessment**
+    to support decision-making for both **individual consumers**
+    and **food suppliers**.
     """)
 
-    st.success("App Status: System Healthy")
+    st.divider()
+
+    st.markdown("""
+    ### 🧠 System Overview
+    FreshScan integrates multiple AI components:
+    - **Freshness Classification Model**  
+      A convolutional neural network (CNN) trained to classify food items as
+      *Fresh* or *Rotten* based on visual features.
+
+    - **Food Type Detection Model**  
+      A pre-trained image classification model that identifies the type of
+      fruit or vegetable present in the image.
+
+    - **Role-Based Output Design**  
+      Results and recommendations are adapted depending on whether the user
+      is an individual consumer or a food supplier.
+    """)
+
+    st.divider()
+
+    st.markdown("""
+    ### ⚠️ System Limitations
+    - The system performs **image-level classification**, not object detection.  
+      When multiple food items appear in a single image, freshness is assessed
+      **globally**, not per individual item.
+
+    - Predictions may be affected by:
+      - Lighting conditions  
+      - Image quality  
+      - Visual similarities between different food items  
+
+    FreshScan is intended as a **decision-support tool** and should not replace
+    proper manual inspection.
+    """)
+
+    st.divider()
+
+    st.markdown("""
+    ### 👨‍👩‍👧‍👦 Project Team
+    - **Galoh Safiya Binti Hasnul Hadi**  
+    - **Marsha Binti Lana Azman**  
+    - **Nur Arissa Hanani Binti Mohamed Adzlan**
+    """)
+
+    st.markdown("""
+    ### 🎓 Academic Context
+    This application was developed for the **Visual Information Processing**
+    course as part of a group-based project, focusing on:
+    - Practical AI deployment
+    - Responsible system design
+    - User-centered interface development
+    """)
+
+    st.success("System Status: Running!")
