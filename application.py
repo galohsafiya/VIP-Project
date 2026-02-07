@@ -226,7 +226,8 @@ if page == "Home":
     st.markdown("""
     ### 🧠 What FreshScan Does
     - 📷 Analyzes images of fruits and vegetables  
-    - 🥗 Classifies freshness as **Fresh** or **Rotten** - 🏷️ Identifies the type of fruit or vegetable  
+    - 🥗 Classifies freshness as **Fresh** or **Rotten** 
+    - 🏷️ Identifies the type of fruit or vegetable  
     - 👤 Adapts results based on **user role** (Consumer or Supplier)  
     """)
 
@@ -234,18 +235,19 @@ if page == "Home":
 
     st.markdown("""
     ### 👥 Who Is This For?
-    - **Individual Consumers** Check food safety before consumption at home  
+    - **Individual Consumers** : Check food safety before consumption at home.  
 
-    - **Food Suppliers** Perform quick quality checks before sale or storage  
+    - **Food Suppliers** : Perform quick quality checks before sale or storage.  
     """)
 
     st.divider()
 
     st.markdown("""
     ### 🔍 How It Works
-    1. Select your **user role** and preferred scanning mode from the sidebar  
-    2. Upload or capture an image in **Start Scanning** 3. The system analyzes the image using deep learning models  
-    4. Freshness status, food type, and confidence level are displayed  
+    1. Select your **user role** and preferred scanning mode from the sidebar.  
+    2. Upload or capture an image in **Start Scanning**. 
+    3. The system analyzes the image using deep learning models.  
+    4. Freshness status, food type, and confidence level are displayed.  
     """)
 
     st.markdown("### 🚀 Get Started")
@@ -282,10 +284,6 @@ elif page == "Start Scanning":
     if final_file:
         image = Image.open(final_file).convert("RGB")
 
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image(image, caption="Current Preview", width=350)
-
         if show_details:
             st.caption(f"Specs: {image.size[0]} × {image.size[1]} pixels")
 
@@ -319,9 +317,29 @@ elif page == "Start Scanning":
         # GRAD-CAM VISUALIZATION
         # -------------------------------
         if enable_gradcam:
-            st.subheader("🔍 AI Analysis Heatmap")
-            st.image(heatmap_img, caption="Red zones indicate where the AI detected freshness or decay markers.", use_container_width=True)
-            st.divider()
+            st.subheader("🔍 Visual Analysis")
+            
+            col_img, col_cam = st.columns(2)
+            with col_img:
+                st.image(
+                    image,
+                    caption="Original Image",
+                    use_container_width=True
+                )
+
+            with col_cam:
+                st.image(
+                heatmap_img,
+                caption="AI Focus Heatmap (Grad-CAM)",
+                use_container_width=True
+            )
+
+            st.caption(
+                "Red regions highlight areas that most influenced the AI's decision. "
+                "This visualization is for interpretability and may not isolate defects precisely."
+            )
+
+        st.divider()
 
         # -------------------------------
         # RESULT CARD
