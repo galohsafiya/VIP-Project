@@ -8,6 +8,7 @@ from torchvision import models, transforms
 from PIL import Image
 import numpy as np
 import time
+import cv2  # Added for Grad-CAM processing
 
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
@@ -46,12 +47,64 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===============================
+# GRAD-CAM HELPER FUNCTION
+# ===============================
+def generate_gradcam(model, img_tensor, original_image, target_layer_name):
+    """Generates a heatmap overlay showing where the AI is focused."""
+    feature_maps = []
+    gradients = []
+
+    def save_feature_map(module, input, output):
+        feature_maps.append(output)
+    
+    def save_gradient(module, grad_input, grad_output):
+        gradients.append(grad_output[0])
+
+    # Access the target layer
+    target_layer = dict(model.named_modules())[target_layer_name]
+    
+    handle_forward = target_layer.register_forward_hook(save_feature_map)
+    handle_backward = target_layer.register_full_backward_hook(save_gradient)
+
+    # Forward pass
+    model.zero_grad()
+    output = model(img_tensor)
+    _, pred_class = torch.max(output, 1)
+    
+    # Backward pass
+    output[:, pred_class].backward()
+
+    # Process gradients and feature maps
+    grads = gradients[0].cpu().data.numpy()
+    f_maps = feature_maps[0].cpu().data.numpy()[0]
+    
+    handle_forward.remove()
+    handle_backward.remove()
+
+    weights = np.mean(grads, axis=(2, 3))[0]
+    cam = np.zeros(f_maps.shape[1:], dtype=np.float32)
+
+    for i, w in enumerate(weights):
+        cam += w * f_maps[i]
+
+    cam = np.maximum(cam, 0)
+    cam = cv2.resize(cam, (224, 224))
+    cam = (cam - np.min(cam)) / (np.max(cam) - np.min(cam) + 1e-8)
+    
+    heatmap = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    
+    img_bg = np.array(original_image.resize((224, 224)))
+    overlayed = cv2.addWeighted(img_bg, 0.6, heatmap, 0.4, 0)
+    
+    return overlayed
+
+# ===============================
 # SIDEBAR: APP SETTINGS
 # ===============================
 with st.sidebar:
     st.title("🛠️ Scanner Settings")
 
-    # NEW: User type selection
     user_type = st.radio(
         "You are a:",
         ["Individual Consumer", "Food Supplier"]
@@ -60,11 +113,13 @@ with st.sidebar:
     MODEL_CONFIG = {
         "Standard Mode (Faster)": {
             "arch": "mobilenet",
-            "file": "mobilenet_freshness_v2_weighted.pth"
+            "file": "mobilenet_freshness_v2_weighted.pth",
+            "layer": "features.18" # Final conv layer for MobileNetV2
         },
         "Deep Scan (More Accurate)": {
             "arch": "efficientnet",
-            "file": "efficientnet_marsha.pth"
+            "file": "efficientnet_marsha.pth",
+            "layer": "features.8"  # Final conv layer for EfficientNet
         }
     }
 
@@ -76,6 +131,7 @@ with st.sidebar:
     with st.expander("Advanced Options"):
         show_confidence = st.checkbox("Show confidence rating", True)
         show_details = st.checkbox("Show image metadata", False)
+        enable_gradcam = st.checkbox("Highlight detection zones", True)
 
     st.divider()
     page = st.radio(
@@ -106,12 +162,7 @@ def load_model(mode_name):
 
     try:
         if config["arch"] == "mobilenet":
-            model = models.mobilenet_v2(
-                weights=models.MobileNet_V2_Weights.DEFAULT
-            )
-            for p in model.parameters():
-                p.requires_grad = False
-
+            model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
             model.classifier[1] = nn.Sequential(
                 nn.Linear(model.last_channel, 128),
                 nn.ReLU(),
@@ -120,21 +171,14 @@ def load_model(mode_name):
             )
 
         elif config["arch"] == "efficientnet":
-            model = models.efficientnet_b0(
-                weights=models.EfficientNet_B0_Weights.DEFAULT
-            )
-            for p in model.parameters():
-                p.requires_grad = False
-
+            model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
             model.classifier[1] = nn.Linear(1280, 2)
 
-        state_dict = torch.load(
-            config["file"],
-            map_location=torch.device("cpu")
-        )
-
+        state_dict = torch.load(config["file"], map_location=torch.device("cpu"))
         model.load_state_dict(state_dict)
         model.eval()
+        # Save target layer to model instance
+        model.target_layer_name = config["layer"]
         return model
 
     except Exception as e:
@@ -148,25 +192,17 @@ freshness_model = load_model(selected_mode)
 # ===============================
 @st.cache_resource
 def load_food_detector():
-    processor = AutoImageProcessor.from_pretrained(
-        "jazzmacedo/fruits-and-vegetables-detector-36"
-    )
-    model = AutoModelForImageClassification.from_pretrained(
-        "jazzmacedo/fruits-and-vegetables-detector-36"
-    )
+    processor = AutoImageProcessor.from_pretrained("jazzmacedo/fruits-and-vegetables-detector-36")
+    model = AutoModelForImageClassification.from_pretrained("jazzmacedo/fruits-and-vegetables-detector-36")
     model.eval()
     return processor, model
 
-
 def predict_food_type(image):
     processor, food_model = load_food_detector()
-
     inputs = processor(images=image, return_tensors="pt")
-
     with torch.no_grad():
         outputs = food_model(**inputs)
         pred_id = outputs.logits.argmax(-1).item()
-
     return food_model.config.id2label[pred_id]
 
 # ===============================
@@ -190,8 +226,7 @@ if page == "Home":
     st.markdown("""
     ### 🧠 What FreshScan Does
     - 📷 Analyzes images of fruits and vegetables  
-    - 🥗 Classifies freshness as **Fresh** or **Rotten**  
-    - 🏷️ Identifies the type of fruit or vegetable  
+    - 🥗 Classifies freshness as **Fresh** or **Rotten** - 🏷️ Identifies the type of fruit or vegetable  
     - 👤 Adapts results based on **user role** (Consumer or Supplier)  
     """)
 
@@ -199,11 +234,9 @@ if page == "Home":
 
     st.markdown("""
     ### 👥 Who Is This For?
-    - **Individual Consumers**  
-      Check food safety before consumption at home  
+    - **Individual Consumers** Check food safety before consumption at home  
 
-    - **Food Suppliers**  
-      Perform quick quality checks before sale or storage  
+    - **Food Suppliers** Perform quick quality checks before sale or storage  
     """)
 
     st.divider()
@@ -211,8 +244,7 @@ if page == "Home":
     st.markdown("""
     ### 🔍 How It Works
     1. Select your **user role** and preferred scanning mode from the sidebar  
-    2. Upload or capture an image in **Start Scanning**  
-    3. The system analyzes the image using deep learning models  
+    2. Upload or capture an image in **Start Scanning** 3. The system analyzes the image using deep learning models  
     4. Freshness status, food type, and confidence level are displayed  
     """)
 
@@ -243,10 +275,7 @@ elif page == "Start Scanning":
     with tab1:
         cam_file = st.camera_input("Scan your food")
     with tab2:
-        up_file = st.file_uploader(
-            "Choose an image...",
-            type=["jpg", "jpeg", "png"]
-        )
+        up_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
     final_file = cam_file if cam_file else up_file
 
@@ -267,23 +296,32 @@ elif page == "Start Scanning":
             time.sleep(1)
 
             img_tensor = image_transform(image).unsqueeze(0)
+            img_tensor.requires_grad = True # Required for Grad-CAM
 
-            with torch.no_grad():
-                outputs = freshness_model(img_tensor)
-                probs = torch.softmax(outputs, dim=1)
-                confidence, pred_class = torch.max(probs, 1)
+            # Freshness Prediction
+            outputs = freshness_model(img_tensor)
+            probs = torch.softmax(outputs, dim=1)
+            confidence, pred_class = torch.max(probs, 1)
 
             label = CLASS_NAMES[pred_class.item()]
             score = confidence.item()
             food_name = predict_food_type(image).title()
 
-            status.update(
-                label="Scanning Complete!",
-                state="complete",
-                expanded=False
-            )
+            # Generate Grad-CAM if enabled
+            if enable_gradcam:
+                heatmap_img = generate_gradcam(freshness_model, img_tensor, image, freshness_model.target_layer_name)
+
+            status.update(label="Scanning Complete!", state="complete", expanded=False)
 
         st.divider()
+
+        # -------------------------------
+        # GRAD-CAM VISUALIZATION
+        # -------------------------------
+        if enable_gradcam:
+            st.subheader("🔍 AI Analysis Heatmap")
+            st.image(heatmap_img, caption="Red zones indicate where the AI detected freshness or decay markers.", use_container_width=True)
+            st.divider()
 
         # -------------------------------
         # RESULT CARD
@@ -296,10 +334,8 @@ elif page == "Start Scanning":
                     <div class="result-sub">{food_name} appears safe for consumption.</div>
                 </div>
                 """, unsafe_allow_html=True)
-
                 st.success("Recommendation: Safe to eat based on visual inspection.")
                 st.balloons()
-
             else:
                 st.markdown(f"""
                 <div class="result-card bad">
@@ -307,9 +343,7 @@ elif page == "Start Scanning":
                     <div class="result-sub">{food_name} shows visible signs of decay.</div>
                 </div>
                 """, unsafe_allow_html=True)
-
                 st.warning("Recommendation: Do not consume this item.")
-
         else:  # Food Supplier
             if label == "Fresh":
                 st.markdown(f"""
@@ -318,9 +352,7 @@ elif page == "Start Scanning":
                     <div class="result-sub">{food_name} meets freshness standards.</div>
                 </div>
                 """, unsafe_allow_html=True)
-
                 st.info("Action: Suitable for sale or short-term storage.")
-
             else:
                 st.markdown(f"""
                 <div class="result-card bad">
@@ -328,7 +360,6 @@ elif page == "Start Scanning":
                     <div class="result-sub">{food_name} does not meet quality standards.</div>
                 </div>
                 """, unsafe_allow_html=True)
-
                 st.warning("Action: Remove from inventory immediately.")
 
         # -------------------------------
@@ -336,7 +367,6 @@ elif page == "Start Scanning":
         # -------------------------------
         if show_confidence:
             st.progress(score)
-
             if score >= 0.85:
                 st.caption("🟢 High confidence result")
             elif score >= 0.65:
@@ -344,15 +374,11 @@ elif page == "Start Scanning":
             else:
                 st.caption("🔴 Low confidence — manual inspection required")
 
-        # -------------------------------
-        # DISCLAIMER
-        # -------------------------------
         st.info(
             "ℹ️ AI-based analysis may be affected by lighting conditions, image quality, "
             "or visual similarities between food items.\n\n"
             "If multiple fruits or vegetables appear in a single image, the system provides "
-            "a general assessment and may not correctly detect spoiled areas on individual items "
-            "separately.\n\n"
+            "a general assessment.\n\n"
             "Always perform a manual inspection before consumption, sale, or distribution!"
         )
 
@@ -367,10 +393,6 @@ elif page == "About":
     FreshScan was developed as part of an academic project to explore how
     **computer vision and deep learning** can be applied to real-world
     food safety and waste reduction challenges.
-
-    The application provides **visual-based freshness assessment**
-    to support decision-making for both **individual consumers**
-    and **food suppliers**.
     """)
 
     st.divider()
@@ -378,52 +400,20 @@ elif page == "About":
     st.markdown("""
     ### 🧠 System Overview
     FreshScan integrates multiple AI components:
-    - **Freshness Classification Model**  
-      A convolutional neural network (CNN) trained to classify food items as
-      *Fresh* or *Rotten* based on visual features.
+    - **Freshness Classification Model** A convolutional neural network (CNN) trained to classify food items as
+      *Fresh* or *Rotten*.
+      
+    - **Explainable AI (Grad-CAM)** The system uses Gradient-weighted Class Activation Mapping to visually 
+      highlight the specific pixels that influenced the AI's decision.
 
-    - **Food Type Detection Model**  
-      A pre-trained image classification model that identifies the type of
-      fruit or vegetable present in the image.
-
-    - **Role-Based Output Design**  
-      Results and recommendations are adapted depending on whether the user
-      is an individual consumer or a food supplier.
-    """)
-
-    st.divider()
-
-    st.markdown("""
-    ### ⚠️ System Limitations
-    - The system performs **image-level classification**, not object detection.  
-      When multiple food items appear in a single image, freshness is assessed
-      **globally**, not per individual item.
-
-    - Predictions may be affected by:
-      - Lighting conditions  
-      - Image quality  
-      - Visual similarities between different food items  
-
-    FreshScan is intended as a **decision-support tool** and should not replace
-    proper manual inspection.
+    - **Food Type Detection Model** Identifies the type of fruit or vegetable present in the image.
     """)
 
     st.divider()
 
     st.markdown("""
     ### 👨‍👩‍👧‍👦 Project Team
-    - **Galoh Safiya Binti Hasnul Hadi**  
-    - **Marsha Binti Lana Azman**  
-    - **Nur Arissa Hanani Binti Mohamed Adzlan**
-    """)
-
-    st.markdown("""
-    ### 🎓 Academic Context
-    This application was developed for the **Visual Information Processing**
-    course as part of a group-based project, focusing on:
-    - Practical AI deployment
-    - Responsible system design
-    - User-centered interface development
+    - **Galoh Safiya Binti Hasnul Hadi** - **Marsha Binti Lana Azman** - **Nur Arissa Hanani Binti Mohamed Adzlan**
     """)
 
     st.success("System Status: Running!")
