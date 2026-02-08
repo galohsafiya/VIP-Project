@@ -113,7 +113,7 @@ with st.sidebar:
     MODEL_CONFIG = {
         "Standard Mode (Faster)": {
             "arch": "mobilenet",
-            "file": "mobilenet_freshness_v2_weighted.pth",
+            "file": "MobilenetV2_galoh_final.pth",
             "layer": "features.18" # Final conv layer for MobileNetV2
         },
         "Deep Scan (More Accurate)": {
